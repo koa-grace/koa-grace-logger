@@ -1,0 +1,23 @@
+{
+  "name": "koa-grace-logger",
+  "version": "1.0.1",
+  "description": "logger middleware for koa-grace",
+  "author": "xiongwilee",
+  "keywords": [
+    "koa",
+    "logger",
+    "middleware",
+    "log"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/koa-grace/koa-grace-logger"
+  },
+  "bugs": {
+    "url": "https://github.com/koa-grace/koa-grace-logger/issues"
+  },
+  "homepage": "https://github.com/koa-grace/koa-grace-logger",
+  "main": "index.js",
+  "readmeFilename": "README.md"
+}
