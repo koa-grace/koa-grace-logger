@@ -1,122 +1,132 @@
-/**
- koa-logger2 - index.js
- (c) 2014 Tomasz Rojek (http://tomrosystems.com/)
- MIT licensed
-*/
-
 'use strict';
 
-exports = module.exports = function main(format) {
-  var frmt = (format) || 'day/month time ip "method url protocol/httpVer" status size "referer" "userAgent" duration ms';
-  var r = 'var outStream = process.stdout;\n'
-+ 'return {\n'
-+ '  gen: function* (next) {' + compile(frmt) + '},\n'
-+ '  setStream: function (s) { outStream = s; return this; }\n'
-+ '}';
+/**
+ * Module dependencies.
+ */
 
-  return new Function(r)();
+const Counter = require('passthrough-counter');
+const bytes = require('bytes');
+
+/**
+ * Expose logger.
+ */
+
+module.exports = dev;
+
+/**
+ * Development logger.
+ */
+
+function dev(opts) {
+  return function* logger(next) {
+    // request
+    let start = new Date;
+
+    try {
+      yield next;
+    } catch (err) {
+      // log uncaught downstream errors
+      log(this, start, null, err);
+      throw err;
+    }
+
+    // calculate the length of a streaming response
+    // by intercepting the stream with a counter.
+    // only necessary if a content-length header is currently not set.
+    let length = this.response.length;
+    let body = this.body;
+    let counter;
+    if (null == length && body && body.readable) {
+      this.body = body
+        .pipe(counter = Counter())
+        .on('error', this.onerror);
+    }
+
+    // log when the response is finished or closed,
+    // whichever happens first.
+    let ctx = this;
+    let res = this.res;
+
+    res.once('finish', done);
+    res.once('close', done);
+
+    function done() {
+      res.removeListener('finish', done);
+      res.removeListener('close', done);
+      log(ctx, start, counter ? counter.length : length, null);
+    }
+  }
 }
 
-// here we are constructing generator function based on format
-function compile(fmt) {
-  var res = {
-    beg: '', // TODO: consider remembering stream in temporary variable ...
-    // here goes yield
-    end: '' // ... and use it here
+/**
+ * Log helper.
+ */
+
+function log(ctx, start, len, err) {
+  // get the status code of the response
+  let status = err ? (err.status || 500) : (ctx.status || 404);
+
+  // get the human readable response length
+  let length;
+  if (~[204, 205, 304].indexOf(status)) {
+    length = '';
+  } else if (null == len) {
+    length = '-';
+  } else {
+    length = bytes(len);
   }
 
-  var tokens = {
-    '\\n': function(){ return "'\\n'"; } // actually this one is not used
-    ,ip: function(){ return "(this.headers['x-forwarded-for'] || this.ip)"; }
-    ,method: function(){ return 'this.method'; }
-    ,url: function(){ return 'this.url'; }
-    ,status: function(){ return 'this.status'; }
+  let logs = [
+    function ip() {
+      let curIp = ctx.headers['x-forwarded-for'] || ctx.ip;
+      return curIp.replace('::ffff:', '');
+    },
+    function method() {
+      return ctx.method;
+    },
+    function url() {
+      return ctx.originalUrl;
+    },
+    function status() {
+      return ctx.status;
+    },
+    function httpVer() {
+      return ctx.req.httpVersion;
+    },
+    function protocol() {
+      return ctx.protocol.toUpperCase();
+    },
+    function size() {
+      return length
+    },
+    function referer() {
+      return ctx.header['referer'] || '-'
+    },
+    function userAgent() {
+      return ctx.header['user-agent'] || '-';
+    },
+    function time() {
+      return Date.now();
+    }
+  ]
 
-    ,httpVer: function(){ return 'this.req.httpVersion'; }
-    ,protocol: function(){ return 'this.protocol.toUpperCase()'; }
-
-    ,size: function(){ return "(this.length || '-')"; }
-
-    ,referer: function(){ return "(this.header['referer'] || '-')"; }
-    ,userAgent: function(){ return "(this.header['user-agent'] || '-')"; }
-
-    // === date formating
-    ,day: function(){
-      if (!this.markBegin) {
-         this.markBegin = true;
-         this.beg += 'var startAt = new Date();\n';
-      }
-      return "( startAt.getDate() < 10 ? '0' : '' ) + startAt.getDate()";
-    }
-    ,month: function(){
-      if (!this.markBegin) {
-         this.markBegin = true;
-         this.beg += 'var startAt = new Date();\n';
-      }
-      return 'startAt.toString().slice(4,7)'; // short string representation
-    }
-    ,year: function(){
-      if (!this.markBegin) {
-         this.markBegin = true;
-         this.beg += 'var startAt = new Date();\n';
-      }
-      return 'startAt.getFullYear()';
-    }
-    ,hour: function(r){
-      if (!this.markBegin) {
-        this.markBegin = true;
-        this.beg += 'var startAt = new Date();\n';
-      }
-      return "( startAt.getHours() < 10 ? '0' : '' ) + startAt.getHours()";
-    }
-    ,time: function(){
-      if (!this.markBegin) {
-        this.markBegin = true;
-        this.beg += 'var startAt = new Date();\n';
-      }
-      return "startAt.toTimeString().slice(0, 8)";
-    }
-    ,zone: function(){ // this one highly depends on v8 extension
-      if (!this.markBegin) {
-        this.markBegin = true;
-        this.beg += 'var startAt = new Date();\n';
-      }
-      return "startAt.toTimeString().slice(12, 17)";
-    }
-    // extension
-    ,duration: function(r){
-      if (!this.markBegin) {
-        this.markBegin = true;
-        this.beg += 'var startAt = new Date();\n';
-      }
-      if (!this.markEnd) {
-        this.markEnd = true;
-        this.end += 'var endAt = new Date();\n';
-      }
-      return "( endAt.getTime() - startAt.getTime() )";
-    }
-    // custom one
-    ,"custom\\[(\\w+)\\]": function(m, p1, offset, str){
-      return "(this." + p1 + " || '-')";
-    }
-  }
-
-  // build one regular expression from above tokens
-  var all = Object.keys(tokens).map(function(it){ return '(?:' + it + ')' }).join('|');
-  var reg = new RegExp(all, 'g');
-
-  function which(token){ // maybe there's some better way to do this?
-    for(var x in tokens) if (token.match(x)) return x;
-    throw 'No pattern found';
-  }
-
-  var b = fmt.replace(reg, function(m, p1, offset){
-    var t = which(m);
-    var r = tokens[t].apply(res, arguments);
-    if (r) return "' + " + r + " + '";
-    return '';
+  let log = '';
+  logs.forEach(function(item) {
+    log += item() + ' | '
   });
+  log += time(start);
 
-  res.end += "\noutStream.write('" + b + "\\n');";
-  return res.beg + 'yield next;\n' + res.end;
-};
+  console.log(log)
+}
+
+/**
+ * Show the response time in a human readable format.
+ * In milliseconds if less than 10 seconds,
+ * in seconds otherwise.
+ */
+
+function time(start) {
+  let delta = new Date - start;
+  delta = delta < 10000 ? delta + 'ms' : Math.round(delta / 1000) + 's';
+  return delta;
+}
