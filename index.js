@@ -18,6 +18,8 @@ module.exports = dev;
  */
 
 function dev(opts) {
+  let env = opts.env || 'development';
+
   return function* logger(next) {
     // request
     let start = new Date;
@@ -28,6 +30,11 @@ function dev(opts) {
       // log uncaught downstream errors
       log(this, start, null, err);
       throw err;
+    }
+
+    // 开发环境不使用这个日志
+    if (env == 'development') {
+      return;
     }
 
     // calculate the length of a streaming response
