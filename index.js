@@ -21,8 +21,16 @@ function dev(opts) {
   let env = opts.env || 'development';
 
   return function* logger(next) {
-    // request
+    let ctx = this;
     let start = new Date;
+
+    // 设置公共头信息
+    if (opts.headers) {
+      for (let item in opts.headers) {
+        ctx.set(item , opts.headers[item]);
+      }
+    }
+
 
     try {
       yield next;
@@ -51,7 +59,6 @@ function dev(opts) {
 
     // log when the response is finished or closed,
     // whichever happens first.
-    let ctx = this;
     let res = this.res;
 
     res.once('finish', done);
